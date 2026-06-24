@@ -72,17 +72,17 @@ Streamlit Market Intelligence Dashboard
 
 The project uses Airbnb datasets for two cities:
 
-| City     | Listings |                 Reviews |              Calendar |
-| -------- | -------: | ----------------------: | --------------------: |
-| London   |   96,871 |               2,097,996 | 35M+ calendar records |
-| New York |   35,036 | Multiple review records | 12M+ calendar records |
+| City     | Listings |Listings with Review History |                                         Calendar |
+| -------- | -------: | --------------------------: | ------------------------------------------------: |
+| London   |   96,871 |              72,749 | 35M+ calendar records[ 35,357,974 daily calendar records] |
+| New York |   35,036 |             24,542  | 12M+ calendar records[ 35,357,974 daily calendar records] |
 
 The final combined master dataset contains:
 
 ```text
-131,907 listings
+Combined: 131,907 listings
 ```
-
+The review and calendar datasets are one-to-many relative to listings. Both were aggregated to listing level before enrichment to prevent row duplication in the final master dataset.
 ---
 
 ## Project Structure
