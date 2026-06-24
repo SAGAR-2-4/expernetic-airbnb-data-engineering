@@ -1,442 +1,533 @@
-import tempfile
-from pathlib import Path
+"""
+Airbnb Market Intelligence Dashboard
+
+This Streamlit application presents curated outputs from the Airbnb
+data-engineering pipeline, exploratory KMeans listing segmentation,
+and guided business analytics for London and New York.
+
+Important interpretation notes:
+- Prices are shown in local source currencies and are not currency-normalized.
+- Occupancy rate is an occupancy/unavailability proxy derived from calendar data.
+- Segments are exploratory analytical groups, not investment recommendations.
+"""
 
 import pandas as pd
 import streamlit as st
-
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
+from pathlib import Path
 
 
 st.set_page_config(
-    page_title="Airbnb AI Analyst Assistant",
-    layout="wide"
+    page_title="Airbnb Market Intelligence Dashboard",
+    page_icon="🏠",
+    layout="wide",
 )
 
 
 @st.cache_data
-def load_default_data():
-    master = pd.read_csv("data/processed/pipeline_master_dataset.csv")
-    segments = pd.read_csv("data/curated/ai_segmented_listings.csv")
-    profile = pd.read_csv("data/curated/ai_segment_profile.csv")
+def load_curated_data():
+    """Load pipeline and segmentation outputs created by the project."""
+
+    master = pd.read_csv(
+        "data/processed/pipeline_master_dataset.csv",
+        low_memory=False,
+    )
+
+    segments = pd.read_csv(
+        "data/curated/ai_segmented_listings.csv",
+        low_memory=False,
+    )
+
+    profile = pd.read_csv(
+        "data/curated/ai_segment_profile.csv",
+        low_memory=False,
+    )
 
     return master, segments, profile
 
 
-def clean_price_column(df):
-    df["price_clean"] = (
-        df["price"]
-        .astype(str)
-        .str.replace("$", "", regex=False)
-        .str.replace(",", "", regex=False)
-        .replace("nan", pd.NA)
-    )
+def get_premium_neighbourhoods(master_df):
+    """
+    Return the top five premium neighbourhoods within each city.
 
-    df["price_clean"] = pd.to_numeric(
-        df["price_clean"],
-        errors="coerce"
-    )
+    Raw source prices are not compared across cities because London and
+    New York use different source currencies.
+    """
 
-    return df
-
- 
-
-
-def process_uploaded_city(listings, reviews, calendar, city_name):
-    listings = listings.copy()
-    reviews = reviews.copy()
-    calendar = calendar.copy()
-
-    listings = clean_price_column(listings)
-
-    date_cols = [
-        "last_scraped",
-        "host_since",
-        "calendar_last_scraped",
-        "first_review",
-        "last_review",
-    ]
-
-    for col in date_cols:
-        if col in listings.columns:
-            listings[col] = pd.to_datetime(listings[col], errors="coerce")
-
-    if "last_scraped" in listings.columns and "host_since" in listings.columns:
-        listings["host_tenure_years"] = (
-            (listings["last_scraped"] - listings["host_since"]).dt.days / 365
+    neighbourhoods = (
+        master_df
+        .dropna(subset=["neighbourhood_cleansed", "price_clean"])
+        .groupby(
+            ["city", "neighbourhood_cleansed"],
+            as_index=False,
         )
-
-    review_summary = (
-        reviews.groupby("listing_id")
         .agg(
-            total_reviews=("id", "count"),
-            first_review_date=("date", "min"),
-            last_review_date=("date", "max"),
-        )
-        .reset_index()
-    )
-
-    calendar_summary = (
-        calendar.groupby("listing_id")
-        .agg(
-            total_days=("date", "count"),
-            available_days=("available", lambda x: (x == "t").sum()),
-            unavailable_days=("available", lambda x: (x == "f").sum()),
-        )
-        .reset_index()
-    )
-
-    calendar_summary["availability_rate"] = (
-        calendar_summary["available_days"] / calendar_summary["total_days"]
-    )
-
-    calendar_summary["occupancy_rate"] = (
-        calendar_summary["unavailable_days"] / calendar_summary["total_days"]
-    )
-
-    master = (
-        listings.merge(
-            review_summary,
-            left_on="id",
-            right_on="listing_id",
-            how="left",
-        )
-        .merge(
-            calendar_summary,
-            left_on="id",
-            right_on="listing_id",
-            how="left",
-        )
-    )
-
-    drop_cols = [
-        col for col in ["listing_id_x", "listing_id_y"]
-        if col in master.columns
-    ]
-
-    master = master.drop(columns=drop_cols)
-    master["city"] = city_name
-
-    return master
-
-
-def generate_ai_segments(master_df):
-    features = [
-        "occupancy_rate",
-        "availability_rate",
-        "total_reviews",
-        "price_clean",
-    ]
-
-    segment_df = master_df[
-        [
-            "id",
-            "city",
-            "room_type",
-            "property_type",
-            "neighbourhood_cleansed",
-        ] + features
-    ].copy()
-
-    segment_df = segment_df.dropna(subset=features)
-
-    if len(segment_df) < 20:
-        return None, None
-
-    price_cap = segment_df["price_clean"].quantile(0.999)
-
-    segment_df = segment_df[
-        segment_df["price_clean"] <= price_cap
-    ].copy()
-
-    scaler = StandardScaler()
-
-    scaled_features = scaler.fit_transform(
-        segment_df[features]
-    )
-
-    model = KMeans(
-        n_clusters=4,
-        random_state=42,
-        n_init=10,
-    )
-
-    segment_df["cluster"] = model.fit_predict(scaled_features)
-
-    cluster_summary = (
-        segment_df.groupby("cluster")[features]
-        .mean()
-        .round(2)
-    )
-
-    high_demand_cluster = cluster_summary["occupancy_rate"].idxmax()
-    luxury_cluster = cluster_summary["price_clean"].idxmax()
-    popular_cluster = cluster_summary["total_reviews"].idxmax()
-    low_performance_cluster = cluster_summary["occupancy_rate"].idxmin()
-
-    segment_mapping = {}
-
-    segment_mapping[high_demand_cluster] = "High Demand"
-    segment_mapping[luxury_cluster] = "Premium Luxury"
-    segment_mapping[popular_cluster] = "Established Popular"
-    segment_mapping[low_performance_cluster] = "Low Performance"
-
-    for cluster in cluster_summary.index:
-        if cluster not in segment_mapping:
-            segment_mapping[cluster] = "General Market"
-
-    segment_df["segment"] = segment_df["cluster"].map(segment_mapping)
-
-    segment_profile = (
-        segment_df.groupby("segment")
-        .agg(
-            occupancy_rate=("occupancy_rate", "mean"),
-            total_reviews=("total_reviews", "mean"),
-            price_clean=("price_clean", "mean"),
+            median_source_price=("price_clean", "median"),
             listing_count=("id", "count"),
         )
-        .round(2)
-        .reset_index()
     )
 
-    return segment_df, segment_profile
+    neighbourhoods = neighbourhoods[
+        neighbourhoods["listing_count"] >= 50
+    ].copy()
+
+    neighbourhoods["price_rank"] = (
+        neighbourhoods
+        .groupby("city")["median_source_price"]
+        .rank(method="first", ascending=False)
+        .astype(int)
+    )
+
+    return (
+        neighbourhoods[
+            neighbourhoods["price_rank"] <= 5
+        ]
+        .sort_values(["city", "price_rank"])
+        .reset_index(drop=True)
+    )
 
 
 segment_insights = {
-    "High Demand":
-        "Strong booking activity and consistent demand. Suitable for revenue-focused investment strategies.",
-
-    "Established Popular":
-        "Large review history indicates proven market acceptance and customer trust.",
-
-    "Premium Luxury":
-        "High-value listings targeting premium travelers and luxury experiences.",
-
-    "Low Performance":
-        "Potential opportunities for pricing optimization, marketing improvements, or listing enhancements.",
-
-    "General Market":
-        "Balanced segment that does not strongly dominate on demand, pricing, or review history.",
+    "High Demand": (
+        "This segment has the highest average calendar unavailability proxy. "
+        "It may represent listings with consistently limited availability, "
+        "but unavailable dates can include bookings, host-blocked dates, "
+        "or other restrictions."
+    ),
+    "Established Popular": (
+        "This segment has substantial historical review activity, suggesting "
+        "longer-term guest engagement and established market presence."
+    ),
+    "Premium Luxury": (
+        "This segment has a high source-price profile. It should be interpreted "
+        "as an exploratory premium segment because London and New York prices "
+        "are not currency-normalized."
+    ),
+    "Low Performance": (
+        "This segment has the lowest calendar unavailability proxy. It may "
+        "represent opportunities to review price positioning, listing quality, "
+        "marketing visibility, or availability-management practices."
+    ),
+    "General Market": (
+        "This segment represents listings with balanced characteristics that "
+        "do not strongly dominate on demand proxy, review history, or price profile."
+    ),
 }
 
 
 def show_segment(profile_df, segmented_df, segment_name):
+    """Display one selected exploratory listing segment."""
+
     segment_row = profile_df[
         profile_df["segment"] == segment_name
-    ].iloc[0]
-
-    st.subheader(f"AI Segment: {segment_name}")
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("Listings", f"{int(segment_row['listing_count']):,}")
-    c2.metric("Avg Occupancy", f"{segment_row['occupancy_rate']:.2f}")
-    c3.metric("Avg Reviews", f"{segment_row['total_reviews']:.2f}")
-    c4.metric("Avg Price", f"£{segment_row['price_clean']:.2f}")
-
-    st.success(segment_insights.get(segment_name, "AI-generated segment."))
-
-    segment_data = segmented_df[
-        segmented_df["segment"] == segment_name
     ]
 
-    st.dataframe(
-        segment_data[
-            [
-                "city",
-                "neighbourhood_cleansed",
-                "room_type",
-                "property_type",
-                "price_clean",
-                "occupancy_rate",
-                "total_reviews",
-            ]
-        ].head(20),
-        use_container_width=True,
-    )
+    if segment_row.empty:
+        st.warning(
+            f"No profile information is available for '{segment_name}'."
+        )
+        return
 
+    segment_row = segment_row.iloc[0]
 
-st.title("🏠 Airbnb AI Analyst Assistant")
-
-st.markdown(
-    """
-    Interactive Airbnb market intelligence tool combining:
-    **repeatable data pipeline + AI segmentation + business analytics dashboard**.
-    """
-)
-
-
-tab1, tab2 = st.tabs(
-    [
-        "Default Market Dashboard",
-        "Upload New City Dataset",
-    ]
-)
-
-
-with tab1:
-    master_df, segmented_df, profile_df = load_default_data()
+    st.subheader(f"Segment Explorer: {segment_name}")
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Total Listings", f"{len(master_df):,}")
-    col2.metric("Cities", master_df["city"].nunique())
-    col3.metric("Average Price", f"£{master_df['price_clean'].mean():.2f}")
-    col4.metric("AI Segments", profile_df["segment"].nunique())
+    col1.metric(
+        "Listings",
+        f"{int(segment_row['listing_count']):,}",
+    )
 
-    st.header("Ask a Market Question")
+    col2.metric(
+        "Avg Unavailability Proxy",
+        f"{segment_row['occupancy_rate']:.2f}",
+    )
+
+    col3.metric(
+        "Avg Reviews",
+        f"{segment_row['total_reviews']:.1f}",
+    )
+
+    col4.metric(
+        "Avg Source Price",
+        f"{segment_row['price_clean']:.2f}",
+    )
+
+    st.info(
+        segment_insights.get(
+            segment_name,
+            "Exploratory listing segment based on clustering outputs.",
+        )
+    )
+
+    st.caption(
+        "Caveat: Occupancy rate is an occupancy/unavailability proxy, "
+        "not confirmed booking occupancy. Source-price values are not "
+        "currency-normalized across cities."
+    )
+
+    segment_data = segmented_df[
+        segmented_df["segment"] == segment_name
+    ].copy()
+
+    display_columns = [
+        "city",
+        "neighbourhood_cleansed",
+        "room_type",
+        "property_type",
+        "price_clean",
+        "occupancy_rate",
+        "total_reviews",
+    ]
+
+    available_columns = [
+        column
+        for column in display_columns
+        if column in segment_data.columns
+    ]
+
+    st.dataframe(
+        segment_data[available_columns].head(20),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# -------------------------------------------------------------------
+# Dashboard
+# -------------------------------------------------------------------
+
+master_df, segmented_df, profile_df = load_curated_data()
+
+st.title("🏠 Airbnb Market Intelligence Dashboard")
+
+st.caption(
+    "Curated data pipeline • Exploratory KMeans segmentation • "
+    "Guided business analytics for London and New York"
+)
+
+st.info(
+    "Interpretation note: Prices are shown in local source currencies and "
+    "must not be treated as directly comparable across London and New York. "
+    "Calendar unavailability is used as an occupancy proxy, not confirmed bookings."
+)
+
+overview_tab, analytics_tab, segments_tab, pipeline_tab = st.tabs(
+    [
+        "Market Overview",
+        "Guided Analytics",
+        "Segment Explorer",
+        "Pipeline Status",
+    ]
+)
+
+
+# -------------------------------------------------------------------
+# Market Overview
+# -------------------------------------------------------------------
+
+with overview_tab:
+    st.subheader("Market Overview")
+
+    metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+
+    metric_1.metric(
+        "Total Listings",
+        f"{len(master_df):,}",
+    )
+
+    metric_2.metric(
+        "Cities Analysed",
+        master_df["city"].nunique(),
+    )
+
+    metric_3.metric(
+        "Exploratory Segments",
+        profile_df["segment"].nunique(),
+    )
+
+    metric_4.metric(
+        "Segmented Listings",
+        f"{len(segmented_df):,}",
+    )
+
+    city_overview = (
+        master_df
+        .groupby("city", as_index=False)
+        .agg(
+            listing_count=("id", "count"),
+            avg_unavailability_proxy=("occupancy_rate", "mean"),
+            avg_availability_rate=("availability_rate", "mean"),
+            avg_source_price=("price_clean", "mean"),
+        )
+        .round(3)
+    )
+
+    st.subheader("City-Level Supply and Availability Overview")
+
+    st.dataframe(
+        city_overview,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "Average source prices are descriptive values only and are not "
+        "currency-normalized across cities."
+    )
+
+    st.subheader("Average Calendar Unavailability Proxy by City")
+
+    st.bar_chart(
+        city_overview.set_index("city")[
+            "avg_unavailability_proxy"
+        ]
+    )
+
+    st.caption(
+        "A higher value means listings were marked unavailable on a larger "
+        "share of observed calendar days. This may reflect bookings, host-blocked "
+        "dates, or other restrictions."
+    )
+
+
+# -------------------------------------------------------------------
+# Guided Analytics
+# -------------------------------------------------------------------
+
+with analytics_tab:
+    st.subheader("Guided Analytics Assistant")
+
+    st.write(
+        "Select a validated business question. The dashboard returns "
+        "results calculated from curated project outputs."
+    )
 
     question = st.selectbox(
         "Choose a business question",
         [
-            "Which city has highest occupancy?",
-            "Which city has highest average price?",
-            "Top expensive neighbourhoods",
-            "Best investment opportunities",
-            "Show luxury market",
-            "Show established performers",
-            "Show underperforming listings",
+            "Which city has the highest occupancy/unavailability proxy?",
+            "Show premium neighbourhoods within each city",
+            "Show high-demand listing segment",
+            "Show premium-luxury listing segment",
+            "Show established-popular listing segment",
+            "Show low-performance listing opportunities",
         ],
     )
 
-    if question == "Which city has highest occupancy?":
+    if question == "Which city has the highest occupancy/unavailability proxy?":
         result = (
-            master_df.groupby("city")["occupancy_rate"]
+            master_df
+            .groupby("city", as_index=False)["occupancy_rate"]
             .mean()
-            .reset_index()
             .sort_values("occupancy_rate", ascending=False)
+            .round(3)
         )
 
-        st.dataframe(result, use_container_width=True)
+        st.dataframe(
+            result,
+            use_container_width=True,
+            hide_index=True,
+        )
 
         top_city = result.iloc[0]["city"]
-        top_occ = result.iloc[0]["occupancy_rate"]
+        top_proxy = result.iloc[0]["occupancy_rate"]
 
         st.success(
-            f"{top_city} has the highest average occupancy rate at {top_occ:.2f}."
+            f"{top_city} has the highest average calendar "
+            f"unavailability proxy at {top_proxy:.3f}."
         )
 
-    elif question == "Which city has highest average price?":
-        result = (
-            master_df.groupby("city")["price_clean"]
-            .mean()
-            .reset_index()
-            .sort_values("price_clean", ascending=False)
+        st.caption(
+            "This is not confirmed booking occupancy. Unavailable dates "
+            "may include bookings, host blocks, or other restrictions."
         )
 
-        st.dataframe(result, use_container_width=True)
+    elif question == "Show premium neighbourhoods within each city":
+        premium_neighbourhoods = get_premium_neighbourhoods(
+            master_df
+        )
 
-        top_city = result.iloc[0]["city"]
-        top_price = result.iloc[0]["price_clean"]
+        st.dataframe(
+            premium_neighbourhoods,
+            use_container_width=True,
+            hide_index=True,
+        )
 
         st.success(
-            f"{top_city} has the highest average listing price at £{top_price:.2f}."
+            "The table identifies the five highest median-price "
+            "neighbourhoods within each city, using neighbourhoods "
+            "with at least 50 listings."
         )
 
-    elif question == "Top expensive neighbourhoods":
-        result = (
-            master_df.groupby(["city", "neighbourhood_cleansed"])["price_clean"]
-            .median()
-            .reset_index()
-            .rename(columns={"price_clean": "median_price"})
-            .sort_values("median_price", ascending=False)
-            .head(10)
+        st.caption(
+            "Prices are ranked within each city only. London and New York "
+            "source currencies are not normalized for cross-city comparison."
         )
 
-        st.dataframe(result, use_container_width=True)
-
-        st.success(
-            "These neighbourhoods represent the highest-priced market areas based on median listing price."
+    elif question == "Show high-demand listing segment":
+        show_segment(
+            profile_df,
+            segmented_df,
+            "High Demand",
         )
 
-    elif question == "Best investment opportunities":
-        show_segment(profile_df, segmented_df, "High Demand")
+    elif question == "Show premium-luxury listing segment":
+        show_segment(
+            profile_df,
+            segmented_df,
+            "Premium Luxury",
+        )
 
-    elif question == "Show luxury market":
-        show_segment(profile_df, segmented_df, "Premium Luxury")
+    elif question == "Show established-popular listing segment":
+        show_segment(
+            profile_df,
+            segmented_df,
+            "Established Popular",
+        )
 
-    elif question == "Show established performers":
-        show_segment(profile_df, segmented_df, "Established Popular")
+    elif question == "Show low-performance listing opportunities":
+        show_segment(
+            profile_df,
+            segmented_df,
+            "Low Performance",
+        )
 
-    elif question == "Show underperforming listings":
-        show_segment(profile_df, segmented_df, "Low Performance")
 
-    st.header("Explore AI Segments")
+# -------------------------------------------------------------------
+# Segment Explorer
+# -------------------------------------------------------------------
+
+with segments_tab:
+    st.subheader("Explore Listing Segments")
+
+    st.write(
+        "Select a segment to inspect its profile and a sample of "
+        "listings assigned to that exploratory group."
+    )
 
     selected_segment = st.selectbox(
-        "Select a segment to inspect",
-        profile_df["segment"].sort_values().unique(),
+        "Select a segment",
+        sorted(profile_df["segment"].dropna().unique()),
     )
 
-    show_segment(profile_df, segmented_df, selected_segment)
-
-
-with tab2:
-    st.header("Upload New City Dataset")
-
-    city_name = st.text_input(
-        "City Name",
-        value="Paris",
+    show_segment(
+        profile_df,
+        segmented_df,
+        selected_segment,
     )
 
-    listings_file = st.file_uploader(
-        "Upload listings.csv.gz",
-        type=["gz"],
+    st.divider()
+
+    st.subheader("Segment Profile Table")
+
+    st.dataframe(
+        profile_df.sort_values("segment"),
+        use_container_width=True,
+        hide_index=True,
     )
 
-    reviews_file = st.file_uploader(
-        "Upload reviews.csv.gz",
-        type=["gz"],
+    st.caption(
+        "Segment labels are business interpretations applied after KMeans "
+        "clustering. They are not ground-truth classes or investment recommendations."
+    )
+    # -------------------------------------------------------------------
+# Pipeline Status
+# -------------------------------------------------------------------
+
+with pipeline_tab:
+    st.subheader("Repeatable Data Pipeline")
+
+    st.write(
+        "The dashboard reads outputs generated by the project's modular "
+        "data-engineering pipeline. Core transformation logic is maintained "
+        "in the `src/` directory rather than duplicated inside the user interface."
     )
 
-    calendar_file = st.file_uploader(
-        "Upload calendar.csv.gz",
-        type=["gz"],
+    pipeline_stages = pd.DataFrame(
+        [
+            {
+                "Stage": "1. Ingestion",
+                "Module": "src/ingestion/load_data.py",
+                "Purpose": "Loads city-level listings, reviews, and calendar datasets.",
+            },
+            {
+                "Stage": "2. Validation",
+                "Module": "src/profiling/validate_data.py",
+                "Purpose": "Checks required datasets, core identifiers, and non-empty inputs.",
+            },
+            {
+                "Stage": "3. Cleaning",
+                "Module": "src/cleaning/clean_listings.py",
+                "Purpose": "Cleans price fields, parses dates, flags price outliers, and derives host tenure.",
+            },
+            {
+                "Stage": "4. Review Aggregation",
+                "Module": "src/transformation/review_aggregation.py",
+                "Purpose": "Creates listing-level review counts and review-date summaries.",
+            },
+            {
+                "Stage": "5. Calendar Aggregation",
+                "Module": "src/transformation/calendar_aggregation.py",
+                "Purpose": "Creates availability and calendar-unavailability proxy metrics.",
+            },
+            {
+                "Stage": "6. Master Dataset",
+                "Module": "src/transformation/build_master.py",
+                "Purpose": "Joins cleaned listings, review summaries, calendar summaries, and city labels.",
+            },
+            {
+                "Stage": "7. Pipeline Orchestration",
+                "Module": "src/pipeline.py",
+                "Purpose": "Runs the workflow for London and New York and saves processed outputs.",
+            },
+        ]
     )
 
-    if st.button("Run Uploaded City Pipeline"):
-        if listings_file and reviews_file and calendar_file:
-            listings = pd.read_csv(listings_file, compression="gzip")
-            reviews = pd.read_csv(reviews_file, compression="gzip")
-            calendar = pd.read_csv(calendar_file, compression="gzip")
+    st.dataframe(
+        pipeline_stages,
+        use_container_width=True,
+        hide_index=True,
+    )
 
-            uploaded_master = process_uploaded_city(
-                listings,
-                reviews,
-                calendar,
-                city_name,
-            )
+    st.subheader("Pipeline Output Status")
 
-            uploaded_segments, uploaded_profile = generate_ai_segments(
-                uploaded_master
-            )
+    output_files = {
+    "Combined Processed Master Dataset":
+        Path("data/processed/pipeline_master_dataset.csv"),
+    "Curated AI Segmentation Output":
+        Path("data/curated/ai_segmented_listings.csv"),
+    "Curated Segment Profile":
+        Path("data/curated/ai_segment_profile.csv"),
+}
 
-            st.success("Uploaded city pipeline completed successfully.")
+    output_status = []
 
-            st.metric("Processed Listings", f"{len(uploaded_master):,}")
+    for output_name, output_path in output_files.items():
+        output_status.append(
+            {
+                "Output": output_name,
+                "Path": str(output_path),
+                "Status": "Available" if output_path.exists() else "Missing",
+            }
+        )
 
-            if uploaded_segments is not None:
-                st.subheader("Generated AI Segment Profile")
-                st.dataframe(uploaded_profile, use_container_width=True)
+    st.dataframe(
+        pd.DataFrame(output_status),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-                selected_uploaded_segment = st.selectbox(
-                    "Inspect uploaded city segment",
-                    uploaded_profile["segment"].sort_values().unique(),
-                )
+    st.success(
+    "The repeatable pipeline successfully generated the combined processed "
+    "master dataset and curated AI segmentation outputs consumed by this dashboard. "
+    "This keeps engineering logic modular, reproducible, and separate from "
+    "presentation logic."
+)
 
-                show_segment(
-                    uploaded_profile,
-                    uploaded_segments,
-                    selected_uploaded_segment,
-                )
-
-            else:
-                st.warning(
-                    "Not enough valid records to generate AI segments."
-                )
-
-        else:
-            st.error(
-                "Please upload listings, reviews, and calendar files."
-            )
+    st.caption(
+        "The dashboard does not rerun the full pipeline interactively because "
+        "the raw calendar datasets contain tens of millions of rows. Pipeline "
+        "execution is performed through the modular source code and documented "
+        "in Notebook 07."
+    )

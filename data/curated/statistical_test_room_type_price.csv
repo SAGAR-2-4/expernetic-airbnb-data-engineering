@@ -1,0 +1,3 @@
+city,entire_home_n,private_room_n,entire_home_median_price,private_room_median_price,median_difference,mann_whitney_u,p_value,bonferroni_adjusted_p_value,rank_biserial_correlation,effect_size_interpretation
+London,41770,19315,173.0,61.0,112.0,733069377.5,0.0,0.0,0.8173,Large
+New York,10857,9108,203.5,100.205,103.295,73489015.0,0.0,0.0,0.4863,Medium

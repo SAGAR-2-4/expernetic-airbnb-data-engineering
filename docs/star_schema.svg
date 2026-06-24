@@ -1,0 +1,123 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="950" viewBox="0 0 1600 950">
+
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#1F4E79"/>
+    </marker>
+
+    <style>
+      .title { font-family: Arial, sans-serif; font-size: 28px; font-weight: bold; fill: #17365D; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 15px; fill: #5B6573; }
+      .table-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: white; }
+      .field { font-family: Arial, sans-serif; font-size: 15px; fill: #1F2937; }
+      .key { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #0F766E; }
+      .relation { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #1F4E79; }
+      .note { font-family: Arial, sans-serif; font-size: 14px; fill: #4B5563; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="950" fill="#F8FAFC"/>
+
+  <text x="800" y="55" text-anchor="middle" class="title">
+    Airbnb Listing Analytics — Star Schema
+  </text>
+
+  <text x="800" y="82" text-anchor="middle" class="subtitle">
+    Fact table grain: one row per Airbnb listing snapshot
+  </text>
+
+  <!-- Relationships -->
+  <line x1="440" y1="255" x2="585" y2="390"
+        stroke="#1F4E79" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <line x1="1160" y1="400" x2="1015" y2="465"
+        stroke="#1F4E79" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <line x1="455" y1="710" x2="585" y2="645"
+        stroke="#1F4E79" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- City to Neighbourhood hierarchy -->
+  <line x1="410" y1="150" x2="1180" y2="180"
+        stroke="#0F766E" stroke-width="2" stroke-dasharray="8,7" marker-end="url(#arrow)"/>
+
+  <!-- Relationship labels -->
+  <text x="455" y="292" class="relation">1</text>
+  <text x="555" y="365" class="relation">*</text>
+
+  <text x="1135" y="430" class="relation">1</text>
+  <text x="1030" y="455" class="relation">*</text>
+
+  <text x="470" y="700" class="relation">1</text>
+  <text x="550" y="665" class="relation">*</text>
+
+  <text x="780" y="145" text-anchor="middle" class="note">
+    City hierarchy
+  </text>
+
+  <!-- dim_city -->
+  <rect x="70" y="125" width="370" height="150" rx="12" fill="white" stroke="#1F4E79" stroke-width="2"/>
+  <rect x="70" y="125" width="370" height="46" rx="12" fill="#1F4E79"/>
+  <text x="255" y="155" text-anchor="middle" class="table-title">dim_city</text>
+
+  <text x="95" y="205" class="key">PK</text>
+  <text x="130" y="205" class="field">city_id</text>
+
+  <text x="95" y="240" class="field">city</text>
+
+  <!-- dim_neighbourhood -->
+  <rect x="1160" y="265" width="375" height="245" rx="12" fill="white" stroke="#1F4E79" stroke-width="2"/>
+  <rect x="1160" y="265" width="375" height="46" rx="12" fill="#1F4E79"/>
+  <text x="1348" y="295" text-anchor="middle" class="table-title">dim_neighbourhood</text>
+
+  <text x="1185" y="345" class="key">PK</text>
+  <text x="1220" y="345" class="field">neighbourhood_id</text>
+
+  <text x="1185" y="380" class="key">FK</text>
+  <text x="1220" y="380" class="field">city_id</text>
+
+  <text x="1185" y="415" class="field">city</text>
+  <text x="1185" y="450" class="field">neighbourhood_cleansed</text>
+
+  <!-- dim_listing -->
+  <rect x="70" y="620" width="385" height="185" rx="12" fill="white" stroke="#1F4E79" stroke-width="2"/>
+  <rect x="70" y="620" width="385" height="46" rx="12" fill="#1F4E79"/>
+  <text x="262" y="650" text-anchor="middle" class="table-title">dim_listing</text>
+
+  <text x="95" y="705" class="key">PK</text>
+  <text x="130" y="705" class="field">listing_id</text>
+
+  <text x="95" y="740" class="field">room_type</text>
+  <text x="95" y="775" class="field">property_type</text>
+
+  <!-- fact_listing -->
+  <rect x="585" y="300" width="430" height="440" rx="14" fill="white" stroke="#0F766E" stroke-width="3"/>
+  <rect x="585" y="300" width="430" height="52" rx="14" fill="#0F766E"/>
+  <text x="800" y="334" text-anchor="middle" class="table-title">fact_listing</text>
+
+  <text x="615" y="390" class="key">PK / FK</text>
+  <text x="700" y="390" class="field">listing_id</text>
+
+  <text x="615" y="425" class="key">FK</text>
+  <text x="665" y="425" class="field">city_id</text>
+
+  <text x="615" y="460" class="key">FK</text>
+  <text x="665" y="460" class="field">neighbourhood_id</text>
+
+  <line x1="610" y1="480" x2="990" y2="480" stroke="#CBD5E1" stroke-width="1"/>
+
+  <text x="615" y="515" class="field">price_clean</text>
+  <text x="615" y="550" class="field">availability_rate</text>
+  <text x="615" y="585" class="field">occupancy_rate</text>
+  <text x="615" y="620" class="field">total_reviews</text>
+  <text x="615" y="655" class="field">review_frequency</text>
+  <text x="615" y="690" class="field">price_per_bedroom</text>
+  <text x="615" y="725" class="field">host_tenure_years</text>
+
+  <!-- Footer note -->
+  <rect x="215" y="860" width="1170" height="52" rx="10" fill="#EAF4F4" stroke="#99D6CF" stroke-width="1.5"/>
+  <text x="800" y="892" text-anchor="middle" class="note">
+    Note: occupancy_rate is an occupancy/unavailability proxy derived from calendar availability, not confirmed booking occupancy.
+  </text>
+
+</svg>
